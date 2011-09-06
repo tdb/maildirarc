@@ -244,11 +244,6 @@ sub file_to_mbox() {
 			# Return-path contains envelope sender (may be empty)
 			elsif (/^Return-path:\s+<(.*)>$/i) {
 				$returnpath = $1;
-				if ($returnpath eq '') {
-					# Based on behaviour of Exim
-					$returnpath = 'MAILER-DAEMON';
-				}
-				$returnpath =~ s/\s/-/g;
 			}
 
 			# Delivery-date contains actually delivery time
@@ -265,7 +260,7 @@ sub file_to_mbox() {
 			}
 
 			# Grab From header in case we don't find Return-path
-			elsif (/^From:.*<([^>]+)>$/i) {
+			elsif (/^From:.*<([^>]*)>$/i) {
 				$from = $1;
 			}
 			elsif (/^From:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
@@ -273,7 +268,7 @@ sub file_to_mbox() {
 			}
 
 			# Grab Sender header in case we don't find Return-path or From
-			elsif (/^Sender:.*<([^>]+)>$/i) {
+			elsif (/^Sender:.*<([^>]*)>$/i) {
 				$sender = $1;
 			}
 			elsif (/^Sender:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
@@ -305,6 +300,13 @@ sub file_to_mbox() {
 			}
 		}
 	}
+
+	# This can by empty (but not undefined)
+	if ($returnpath eq '') {
+		# Based on behaviour of Exim
+		$returnpath = 'MAILER-DAEMON';
+	}
+	$returnpath =~ s/\s/-/g;
 
 	# If we didn't find the Delivery-date header, fall back to Date
 	if (!defined $deliverydate) {
