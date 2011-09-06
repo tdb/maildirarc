@@ -1,0 +1,487 @@
+#!/usr/local/bin/perl -w
+
+# Maildirarc: A Maildir archival script
+# Copyright (C) 2011  Tim Bishop <tim@bishnet.net>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+# Archives a given Maildir folder to another Maildir folder or to an
+# mbox file. The target, cutoff period, and other options can be
+# specified on the command line.
+#
+# Based on, and compatible with, the similarly named shell script
+# written in June 2003 by the same author.
+#
+# Tim Bishop, September 2011.
+
+# Things to think about:
+#
+# Locking of mbox files (especially when keeping them open).
+# Keeping mbox files open means we could hit an FD limit.
+# Should we close and reopen mbox file every time filename changes?
+
+# mbox format notes:
+# http://homepage.ntlworld.com/jonathan.deboynepollard/FGA/mail-mbox-formats.html
+
+use strict;
+
+use Getopt::Long;
+use Date::Parse;
+use Fcntl qw(:DEFAULT :mode);
+use File::Copy;
+
+my $DEFARCFOLDER = 'archive';
+my %MBOXFHS;
+my %MBOXMSGCOUNT;
+
+my $ARCFOLDER;
+my $MBOX;
+my $DAYS = 90;
+my $DO = 1;
+my $REMOVE = 0;
+my $COPY = 0;
+my $DEBUG = 0;
+
+unless (GetOptions(
+		'f=s' => \$ARCFOLDER,
+		'm=s' => \$MBOX,
+		'd=i' => \$DAYS,
+		'r' => \$REMOVE,
+		'c' => \$COPY,
+		'n' => sub { $DO = 0 },
+		'debug' => \$DEBUG,
+		'help|h' => \&help,
+		)) {
+	&usage();
+}
+
+if (defined $ARCFOLDER && defined $MBOX) {
+	print STDERR "Error: -f and -m cannot be specified together\n";
+	&usage();
+}
+
+if ($REMOVE == 1 && (defined $ARCFOLDER || defined $MBOX)) {
+	print STDERR "Error: -f and -m don't make sense if -r is given\n";
+	&usage();
+}
+
+if ($REMOVE == 1 && $COPY == 1) {
+	print STDERR "Error: -c and -r don't make sense given together\n";
+	&usage();
+}
+
+if (@ARGV == 0) {
+	print STDERR "Error: no folders specified\n";
+	&usage();
+}
+
+if ($DEBUG == 1) {
+	print "Archive Folder:				$ARCFOLDER\n" if defined $ARCFOLDER;
+	print "Mbox File:				$MBOX\n" if defined $MBOX;
+	print "Age in days to archive:			$DAYS\n";
+	print "Actually do stuff?:			". ($DO==1 ? 'yes' : 'no') ."\n";
+	print "Remove rather than archive?:		". ($REMOVE==1 ? 'yes' : 'no') ."\n";
+	print "Copy rather than move when archiving?:	". ($COPY==1 ?  'yes' : 'no') ."\n";
+	print "List of Maildir folders to process:	" . join(' ', @ARGV) . "\n";
+}
+
+foreach my $folder (@ARGV) {
+	&archive_folder($folder);
+}
+
+foreach my $fh (sort keys %MBOXFHS) {
+	if ($DEBUG == 1) {
+		print "Closing $fh";
+		if (defined $MBOXMSGCOUNT{$fh}) {
+			print " with $MBOXMSGCOUNT{$fh} messages";
+		}
+		print ".\n";
+	}
+	close($MBOXFHS{$fh}) || die "Can't close mbox file $fh: $!";
+}
+
+exit(0);
+
+# Archive a given Maildir folder
+sub archive_folder() {
+	my ($folder) = @_;
+
+	if (! -d "$folder/cur" || ! -d "$folder/new" || ! -d "$folder/tmp") {
+		print STDERR "Error: $folder is not a Maildir folder\n";
+	}
+
+	# This only gets used when archiving to Maildir (not mbox)
+	my $destfolder = "$folder.$DEFARCFOLDER";
+	if (defined $ARCFOLDER) {
+		$destfolder = $ARCFOLDER;
+	}
+
+	# Check if the target exists, and possibly create it
+	if ($REMOVE != 1) {
+		if (!defined $MBOX) {
+			if (! -d "$destfolder/cur" || ! -d "$destfolder/new" || ! -d "$destfolder/tmp") {
+				if (! -d "$destfolder") {
+					if ($DO == 1) {
+						&make_maildir($destfolder);
+					} else {
+						print "Would create Maildir folder $destfolder\n";
+					}
+				} else {
+					print STDERR "$destfolder exists, but is not a Maildir folder\n";
+					exit(1);
+				}
+			}
+		}
+	}
+
+	# Workout the archive cutoff point in seconds since the epoch
+	my $cutoff = time() - ($DAYS * 24 * 60 * 60);
+
+	if ($DO != 1) {
+		if ($REMOVE == 1) {
+			print "Would remove these messages from $folder/cur:\n";
+		} else {
+			my $action = $COPY == 1 ? "copy" : "move";
+			if (defined $MBOX) {
+				print "Would $action these messages from $folder/cur\n";
+				print "                            to $MBOX:\n";
+			} else {
+				print "Would $action these messages from $folder/cur\n";
+				print "                            to $destfolder/cur:\n";
+			}
+		}
+	}
+
+	# The main processing loop
+	opendir(DIR, "$folder/cur") || die "Can't open directory $folder/cur: $!";
+	foreach my $file (sort readdir(DIR)) { # FIXME this is inefficient for large directories
+		my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = stat("$folder/cur/$file");
+		next unless S_ISREG($mode);
+		next unless $mtime < $cutoff;
+
+		if ($DO != 1) {
+			print "$folder/cur/$file\n";
+		} else {
+			if ($REMOVE == 1) {
+				unlink("$folder/cur/$file") || die "Can't remove $folder/cur/$file: $!";
+			} else {
+				if (defined $MBOX) {
+					&file_to_mbox("$folder/cur/$file", $MBOX);
+					if ($COPY != 1) {
+						unlink("$folder/cur/$file") || die "Can't remove $folder/cur/$file: $!";
+					}
+				} else {
+					if ($COPY == 1) {
+						copy("$folder/cur/$file", "$destfolder/cur/$file") || die "Can't copy $folder/cur/$file to $destfolder/cur/$file: $!";
+					} else {
+						move("$folder/cur/$file", "$destfolder/cur/$file") || die "Can't move $folder/cur/$file to $destfolder/cur/$file: $!";
+					}
+				}
+			}
+		}
+	}
+	closedir(DIR) || die "Can't close directory $folder/cur: $!";
+}
+
+# Make a Maildir folder with restrictive permissions
+sub make_maildir() {
+	my ($folder) = @_;
+
+	mkdir("$folder", 0700) || die "Can't create $folder: $!";
+	mkdir("$folder/cur", 0700) || die "Can't create $folder/cur: $!";
+	mkdir("$folder/new", 0700) || die "Can't create $folder/new: $!";
+	mkdir("$folder/tmp", 0700) || die "Can't create $folder/tmp: $!";
+
+	sysopen(FH, "$folder/maildirfolder", O_WRONLY | O_CREAT | O_NONBLOCK | O_NOCTTY, 0600) || die "Can't create $folder/maildirfolder: $!";
+	close(FH) || die "Can't close $folder/maildirfolder: $!";
+}
+
+# Read a Maildir file and append it to an mbox file
+sub file_to_mbox() {
+	my ($file, $mbox) = @_;
+
+	open(MDMESSAGE, "<$file") || die "Can't open Maildir message $file: $!";
+
+	# First pass is to find data for From line and extra headers
+	my $returnpath;
+	my $deliverydate;
+	my $date;
+	my $from;
+	my $sender;
+	my $contentlength = 0;
+	my $seencontentlength = undef;
+	my $seenstatus = undef;
+	my $seenxstatus = undef;
+	my $inbody = 0;
+
+	while(<MDMESSAGE>) {
+		# Do this here too so that the Content-Length is correct
+		s/^From />From /;
+
+		if ($inbody == 1) {
+			$contentlength += length($_);
+		}
+
+		# Check if we're in the headers still
+		if ($inbody == 0) {
+			# First blank line indicates end of headers
+			if (/^$/) {
+				$inbody = 1;
+			}
+
+			# Return-path contains envelope sender (may be empty)
+			elsif (/^Return-path:\s+<(.*)>$/i) {
+				$returnpath = $1;
+				if ($returnpath eq '') {
+					# Based on behaviour of Exim
+					$returnpath = 'MAILER-DAEMON';
+				}
+				$returnpath =~ s/\s/-/g;
+			}
+
+			# Delivery-date contains actually delivery time
+			elsif (/^Delivery-date:\s+(.+)$/i) {
+				$deliverydate = str2time($1);
+				if (!defined $deliverydate) {
+					die "Can't parse Delivery-date header in $file";
+				}
+			}
+
+			# Grab Date header in case we don't find Delivery-date
+			elsif (/^Date:\s+(.+)$/i) {
+				$date = $1;
+			}
+
+			# Grab From header in case we don't find Return-path
+			elsif (/^From:.*<([^>]+)>$/i) {
+				$from = $1;
+			}
+			elsif (/^From:\s+([^\@^\s]+\@[^\@^\s]+)\s*$/i) {
+				$from = $1;
+			}
+
+			# Grab Sender header in case we don't find Return-path or From
+			elsif (/^Sender:.*<([^>]+)>$/i) {
+				$sender = $1;
+			}
+			elsif (/^Sender:\s+([^\@^\s]+\@[^\@^\s]+)\s*$/i) {
+				$sender = $1;
+			}
+
+			# Keep note if we see headers we'll add later
+			elsif (/^Content-Length:\s*(.*)$/i) {
+				$seencontentlength = $1;
+			}
+			elsif (/^Status:\s*(.*)$/i) {
+				$seenstatus = $1;
+			}
+			elsif (/^X-Status:\s*(.*)$/i) {
+				$seenxstatus = $1;
+			}
+		}
+	}
+
+	# If we didn't find the Return-path header, fall back to From or Sender
+	if (!defined $returnpath) {
+		if (defined $from) {
+			$returnpath = $from;
+		} else {
+			if (defined $sender) {
+				$returnpath = $sender;
+			} else {
+				die "Can't find Return-path, From or Sender headers in $file";
+			}
+		}
+	}
+
+	# If we didn't find the Delivery-date header, fall back to Date
+	if (!defined $deliverydate) {
+		if (defined $date) {
+			$date = str2time($date);
+			if (!defined $date) {
+				die "Can't parse Date header in $file";
+			} else {
+				$deliverydate = $date;
+			}
+		} else {
+			die "Can't find Delivery-date or Date headers in $file";
+		}
+	}
+
+	# Do some replacements on the mbox file name so
+	# we can split a single Maildir to multiple mboxes
+	my @parseddd = gmtime($deliverydate);
+	my $year = $parseddd[5] + 1900;
+	$mbox =~ s/\%y/$year/g;
+	my $month = sprintf("%02d", $parseddd[4]+1);
+	$mbox =~ s/\%m/$month/g;
+	# grab the Maildir foldername
+	# /home/tdb/Maildir/.folder.subfolder/cur -> folder-subfolder
+	if ($file =~ m/\.?([^\/]+)\/cur\/[^\/]+$/) {
+		my $maildirname = $1;
+		$maildirname =~ s/\./-/g;
+		$mbox =~ s/\%n/$maildirname/g;
+	}
+
+	my $MBOXFH = $MBOXFHS{$mbox};
+	if (!defined $MBOXFH) {
+		print "Opening $mbox...\n" if $DEBUG == 1;
+		if (-e $mbox && ! -f $mbox) {
+			print STDERR "$mbox exists, but is not a file\n";
+			exit(1);
+		}
+		open($MBOXFH, ">>$mbox") || die "Can't open (for append) mbox file $mbox: $!";
+		$MBOXFHS{$mbox} = $MBOXFH;
+	}
+
+	# Required separator line
+	print $MBOXFH "From $returnpath " . gmtime($deliverydate) . "\n";
+
+	# Return to beginning of Maildir file
+	seek(MDMESSAGE, 0, 0);
+
+	# Second pass is to write the data out to the mbox file
+	$inbody = 0;
+	while(<MDMESSAGE>) {
+		s/^From />From /;
+
+		# We're going to add these, so throw away any old ones we find
+		if ($inbody == 0) {
+			next if /^Content-Length:/i;
+			next if /^Status:/i;
+			next if /^X-Status:/i;
+		}
+
+		if (/^$/ && $inbody == 0) {
+			$inbody = 1;
+
+			# Attempt to figure out flags for Status headers
+			# Not sure if order of flags matters
+			my $status;
+			my $xstatus;
+			if ($file =~ /:2,([A-Z]+)$/) {
+				foreach my $flag (split(//, $1)) {
+					if ($flag eq 'S') { # seen
+						$status .= 'R';
+					} elsif ($flag eq 'R') { # replied
+						$xstatus .= 'A';
+					} elsif ($flag eq 'F') { # flagged
+						$xstatus .= 'F';
+					} elsif ($flag eq 'T') { # trashed
+						$xstatus .= 'D';
+					} elsif ($flag eq 'D') { # draft
+						$xstatus .= 'T';
+					} else {
+						print STDERR "Unexpected flags: $file\n";
+						exit(1);
+					}
+				}
+				$status .= 'O'; # old (we're in cur, so always old)
+			}
+
+			&printheader($MBOXFH, "Status", $status, $seenstatus, $file);
+			&printheader($MBOXFH, "X-Status", $xstatus, $seenxstatus, $file);
+			&printheader($MBOXFH, "Content-Length", $contentlength, $seencontentlength, $file);
+		}
+
+		print $MBOXFH $_;
+	}
+
+	print $MBOXFH "\n";
+
+	$MBOXMSGCOUNT{$mbox}++;
+
+	close(MDMESSAGE) || die "Can't close Maildir message $file: $!";
+}
+
+sub printheader() {
+	my ($fh, $header, $value, $seenvalue, $file) = @_;
+
+	return unless defined $value;
+
+	if ($DEBUG == 1 && defined $seenvalue && $seenvalue ne $value && $seenvalue ne '') {
+		print STDERR "Found header $header in $file that doesn't match our value\n";
+		print STDERR "Ours:\t$header: $value\t(using this one)\n";
+		print STDERR "Theirs:\t$header: $seenvalue\n";
+		print STDERR "\n";
+	}
+
+	print $fh "$header: $value\n";
+}
+
+sub usage() {
+	print STDERR <<EOF;
+Usage: $0 [-h] [-f folder] [-m mbox] [-d days] [-r] [-c] [-n] folder [folder...]
+Archives the contents of the given folders.
+
+  -f    the full path of the archive folder [default: [folder].archive]
+  -m    the full path of the archive mbox
+        (%y substituted for year, %m month, %n for folder name)
+  -d    the age, in days, at which to archive a message [default: 90]
+  -r    REMOVE the messages rather than move them
+  -c    copy rather than move messages (leaves original intact)
+  -n    don't do anything; just say what would be done
+  -h    print longer help information
+
+EOF
+}
+
+sub help() {
+	&usage();
+	print STDERR <<EOF;
+Note:
+  To clarify the -f option. By default a folder with the extension .archive
+  will be created alongside the folder to be archived. For example:
+
+      /home/tdb/Maildir/.spam -> /home/tdb/Maildir/.spam.archive
+
+  If you want to override this use the -f flag. You need to give the full
+  path to the destination folder. You could do:
+
+      -f /home/tdb/archiveMaildir/.spam /home/tdb/Maildir/.spam
+
+      /home/tdb/Maildir/.spam -> /home/tdb/archiveMaildir/.spam
+
+  If you specify -f it will apply to every folder you archive, so be
+  warned, it might not do what you want!
+
+Examples:
+  # Archive messages older than 30 days in /home/tdb/Maildir
+  # to the Maildir folder /home/tdb/Maildir/.old
+  $0 -f /home/tdb/Maildir/.old -d 30 /home/tdb/Maildir
+
+  # Archive messages older than 90 days for both of these folders
+  # to a sub-folder (courier style) called archive
+  $0 -d 90 /home/tdb/Maildir/.lists /home/tdb/Maildir/.work
+
+  # Test to see what would be archived with the default settings
+  # in the folder /home/tdb/Maildir/.personal
+  $0 -n /home/tdb/Maildir/.personal
+
+  # Archive messages older than 30 days in the Maildir folder
+  # /home/tdb/Maildir/.spam to the mbox file called
+  # /home/tdb/MailArchive/spam
+  $0 -d 30 -m /home/tdb/MailArchive/spam /home/tdb/Maildir/.spam
+
+  # Remove messages older than 15 days from /home/tdb/Maildir/.vspam
+  $0 -d 15 -r /home/tdb/Maildir/.vspam
+
+  # Make a complete copy of /home/tdb/Maildir/.folder
+  $0 -d 0 -c -f /home/tdb/Maildir/.foldercopy /home/tdb/Maildir/.folder
+EOF
+	exit (1);
+}
+
+# vi:set ts=4 sw=4 noexpandtab:
