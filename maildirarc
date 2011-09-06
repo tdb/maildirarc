@@ -260,7 +260,7 @@ sub file_to_mbox() {
 			}
 
 			# Grab From header in case we don't find Return-path
-			elsif (/^From:.*<([^>]*)>$/i) {
+			elsif (/^From:.*<([^>]*)>\s*$/i) {
 				$from = $1;
 			}
 			elsif (/^From:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
@@ -268,7 +268,7 @@ sub file_to_mbox() {
 			}
 
 			# Grab Sender header in case we don't find Return-path or From
-			elsif (/^Sender:.*<([^>]*)>$/i) {
+			elsif (/^Sender:.*<([^>]*)>\s*$/i) {
 				$sender = $1;
 			}
 			elsif (/^Sender:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
