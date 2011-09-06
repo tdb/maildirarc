@@ -268,7 +268,7 @@ sub file_to_mbox() {
 			elsif (/^From:.*<([^>]+)>$/i) {
 				$from = $1;
 			}
-			elsif (/^From:\s+([^\@^\s]+\@[^\@^\s]+)\s*$/i) {
+			elsif (/^From:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
 				$from = $1;
 			}
 
@@ -276,7 +276,7 @@ sub file_to_mbox() {
 			elsif (/^Sender:.*<([^>]+)>$/i) {
 				$sender = $1;
 			}
-			elsif (/^Sender:\s+([^\@^\s]+\@[^\@^\s]+)\s*$/i) {
+			elsif (/^Sender:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
 				$sender = $1;
 			}
 
