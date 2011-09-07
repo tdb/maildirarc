@@ -44,6 +44,20 @@ mboxcl. The mboxcl format quotes lines in the message body that
 start with `"From "` and additionally adds a `Content-Length` header.
 This is consistent with the behaviour of Mutt.
 
+Maildirarc needs to create the `"From "` separator line for each message
+when adding it to an mbox file. To do this it requires the delivery date
+and the sender's email address. It obtains these as follows:
+
+ * The delivery date is taken by looking first at the `Delivery-date`
+   header. If that doesn't exist it next looks at the latest `Received`
+   header. It never looks at the `Date` header since this may be bogus or
+   invalid. If a date cannot be parsed or isn't found at all Maildirarc
+   will abort.
+
+ * The sender's email address is obtained by looking at these headers
+   in order: `Return-path`, `From`, `Sender`, `Reply-To`. If it fails
+   to find an address in any of those it aborts.
+
 ## Examples ##
 
 Some example uses of Maildirarc taken from the `maildirarc --help`

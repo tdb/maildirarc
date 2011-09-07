@@ -120,6 +120,7 @@ sub archive_folder() {
 
 	if (! -d "$folder/cur" || ! -d "$folder/new" || ! -d "$folder/tmp") {
 		print STDERR "Error: $folder is not a Maildir folder\n";
+		exit(1);
 	}
 
 	# This only gets used when archiving to Maildir (not mbox)
@@ -217,14 +218,16 @@ sub file_to_mbox() {
 	# First pass is to find data for From line and extra headers
 	my $returnpath;
 	my $deliverydate;
-	my $date;
+	my $received;
 	my $from;
 	my $sender;
+	my $replyto;
 	my $contentlength = 0;
-	my $seencontentlength = undef;
-	my $seenstatus = undef;
-	my $seenxstatus = undef;
+	my $seencontentlength;
+	my $seenstatus;
+	my $seenxstatus;
 	my $inbody = 0;
+	my $buffer;
 
 	while(<MDMESSAGE>) {
 		# Do this here too so that the Content-Length is correct
@@ -236,54 +239,77 @@ sub file_to_mbox() {
 
 		# Check if we're in the headers still
 		if ($inbody == 0) {
-			# First blank line indicates end of headers
-			if (/^$/) {
-				$inbody = 1;
-			}
+			# This corrupts the original line, but we don't need it in its original form anymore
+			chomp;
 
-			# Return-path contains envelope sender (may be empty)
-			elsif (/^Return-path:\s+<(.*)>$/i) {
-				$returnpath = $1;
-			}
-
-			# Delivery-date contains actually delivery time
-			elsif (/^Delivery-date:\s+(.+)$/i) {
-				$deliverydate = str2time($1);
-				if (!defined $deliverydate) {
-					die "Can't parse Delivery-date header in $file";
+			# Need to cope with header continuation lines, so use a buffer
+			if (!defined $buffer) {	# First time round
+				$buffer = $_;
+			} elsif (/^\s+/) {		# Continuation line
+				$buffer .= $_;
+			} else {				# Not continuation, so new header (or end of headers)
+				# First blank line indicates end of headers
+				if (/^$/) {
+					$inbody = 1;
 				}
-			}
 
-			# Grab Date header in case we don't find Delivery-date
-			elsif (/^Date:\s+(.+)$/i) {
-				$date = $1;
-			}
+				# Now process anything in our buffer
 
-			# Grab From header in case we don't find Return-path
-			elsif (/^From:.*<([^>]*)>\s*$/i) {
-				$from = $1;
-			}
-			elsif (/^From:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
-				$from = $1;
-			}
+				# Return-path contains envelope sender (may be empty)
+				if ($buffer =~ /^Return-path:\s+<(.*)>$/i) {
+					$returnpath = $1;
+				}
 
-			# Grab Sender header in case we don't find Return-path or From
-			elsif (/^Sender:.*<([^>]*)>\s*$/i) {
-				$sender = $1;
-			}
-			elsif (/^Sender:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
-				$sender = $1;
-			}
+				# Delivery-date contains actually delivery time
+				elsif ($buffer =~ /^Delivery-date:\s+(.+)$/i) {
+					$deliverydate = str2time($1);
+					if (!defined $deliverydate) {
+						die "Can't parse Delivery-date header in $file";
+					}
+				}
 
-			# Keep note if we see headers we'll add later
-			elsif (/^Content-Length:\s*(.*)$/i) {
-				$seencontentlength = $1;
-			}
-			elsif (/^Status:\s*(.*)$/i) {
-				$seenstatus = $1;
-			}
-			elsif (/^X-Status:\s*(.*)$/i) {
-				$seenxstatus = $1;
+				# Grab first (ie. latest) received header in case we don't find Delivery-date
+				elsif (!defined $received && $buffer =~ /^Received:.*;([^;]+)$/) {
+					$received = $1;
+				}
+
+				# Grab From header in case we don't find Return-path
+				elsif ($buffer =~ /^From:.*<([^>]*)>\s*$/i) {
+					$from = $1;
+				}
+				elsif ($buffer =~ /^From:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
+					$from = $1;
+				}
+
+				# Grab Sender header in case we don't find Return-path or From
+				elsif ($buffer =~ /^Sender:.*<([^>]*)>\s*$/i) {
+					$sender = $1;
+				}
+				elsif ($buffer =~ /^Sender:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
+					$sender = $1;
+				}
+
+				# Grab Reply-To header in case we don't find Return-path, From or Sender
+				elsif ($buffer =~ /^Reply-To:.*<([^>]*)>\s*$/i) {
+					$replyto = $1;
+				}
+				elsif ($buffer =~ /^Reply-To:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
+					$replyto = $1;
+				}
+
+				# Keep note if we see headers we'll add later
+				elsif ($buffer =~ /^Content-Length:\s*(.*)$/i) {
+					$seencontentlength = $1;
+				}
+				elsif ($buffer =~ /^Status:\s*(.*)$/i) {
+					$seenstatus = $1;
+				}
+				elsif ($buffer =~ /^X-Status:\s*(.*)$/i) {
+					$seenxstatus = $1;
+				}
+
+				# Add current line to the buffer for the next pass
+				$buffer = $_;
 			}
 		}
 	}
@@ -296,7 +322,11 @@ sub file_to_mbox() {
 			if (defined $sender) {
 				$returnpath = $sender;
 			} else {
-				die "Can't find Return-path, From or Sender headers in $file";
+				if (defined $replyto) {
+					$returnpath = $replyto;
+				} else {
+					warn "Can't find Return-path, From, Sender or Reply-To headers in $file";
+				}
 			}
 		}
 	}
@@ -308,17 +338,17 @@ sub file_to_mbox() {
 	}
 	$returnpath =~ s/\s/-/g;
 
-	# If we didn't find the Delivery-date header, fall back to Date
+	# If we didn't find the Delivery-date header, fall back to most recent Received
 	if (!defined $deliverydate) {
-		if (defined $date) {
-			$date = str2time($date);
-			if (!defined $date) {
-				die "Can't parse Date header in $file";
+		if (defined $received) {
+			$received = str2time($received);
+			if (!defined $received) {
+				die "Can't parse date in first Received header in $file";
 			} else {
-				$deliverydate = $date;
+				$deliverydate = $received;
 			}
 		} else {
-			die "Can't find Delivery-date or Date headers in $file";
+			die "Can't find Delivery-date or Received headers in $file";
 		}
 	}
 
@@ -360,6 +390,7 @@ sub file_to_mbox() {
 		s/^From />From /;
 
 		# We're going to add these, so throw away any old ones we find
+		# FIXME this is potentially broken if these span multiple lines
 		if ($inbody == 0) {
 			next if /^Content-Length:/i;
 			next if /^Status:/i;
