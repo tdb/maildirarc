@@ -31,6 +31,7 @@
 # Locking of mbox files (especially when keeping them open).
 # Keeping mbox files open means we could hit an FD limit.
 # Should we close and reopen mbox file every time filename changes?
+# Use something like Email::Address to parse the email address headers?
 
 # mbox format notes:
 # http://homepage.ntlworld.com/jonathan.deboynepollard/FGA/mail-mbox-formats.html
@@ -273,11 +274,16 @@ sub file_to_mbox() {
 					$received = $1;
 				}
 
+				# FIXME generally uneasy about the address parsing here
+
 				# Grab From header in case we don't find Return-path
 				elsif ($buffer =~ /^From:.*<([^>]*)>\s*$/i) {
 					$from = $1;
 				}
-				elsif ($buffer =~ /^From:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
+				elsif ($buffer =~ /^From:.*\s+(\"[^\@]+\"\@[^\@^\s]+)\s*/i) {
+					$from = $1;
+				}
+				elsif ($buffer =~ /^From:.*\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
 					$from = $1;
 				}
 
@@ -285,16 +291,22 @@ sub file_to_mbox() {
 				elsif ($buffer =~ /^Sender:.*<([^>]*)>\s*$/i) {
 					$sender = $1;
 				}
-				elsif ($buffer =~ /^Sender:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
-					$sender = $1;
+				elsif ($buffer =~ /^Sender:.*\s+(\"[^\@]+\"\@[^\@^\s]+)\s*/i) {
+					$from = $1;
+				}
+				elsif ($buffer =~ /^Sender:.*\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
+					$from = $1;
 				}
 
 				# Grab Reply-To header in case we don't find Return-path, From or Sender
 				elsif ($buffer =~ /^Reply-To:.*<([^>]*)>\s*$/i) {
 					$replyto = $1;
 				}
-				elsif ($buffer =~ /^Reply-To:\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
-					$replyto = $1;
+				elsif ($buffer =~ /^Reply-To:.*\s+(\"[^\@]+\"\@[^\@^\s]+)\s*/i) {
+					$from = $1;
+				}
+				elsif ($buffer =~ /^Reply-To:.*\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
+					$from = $1;
 				}
 
 				# Keep note if we see headers we'll add later
@@ -325,7 +337,7 @@ sub file_to_mbox() {
 				if (defined $replyto) {
 					$returnpath = $replyto;
 				} else {
-					warn "Can't find Return-path, From, Sender or Reply-To headers in $file";
+					die "Can't find Return-path, From, Sender or Reply-To headers in $file";
 				}
 			}
 		}

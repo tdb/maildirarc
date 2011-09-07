@@ -125,6 +125,10 @@ output:
    rather than email, and even there they're now deprecated. So now
    Maildirarc completely ignores the Lines header.
 
+ * When operating in mbox mode the header parsing used to locate the
+   sender's address is fragile. There are almost certainly address
+   formats that it will incorrectly parse.
+
 ## License ##
 
 Maildirarc is released under the GPLv2 license. See the COPYING
