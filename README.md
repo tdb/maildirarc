@@ -126,6 +126,13 @@ output:
    rather than email, and even there they're now deprecated. So now
    Maildirarc completely ignores the Lines header.
 
+ * The processing order of messages is based upon the sorted order of
+   filenames within the Maildir's cur directory. It looks like the Maildir
+   specification uses a timestamp as the first part of the filename, so
+   in theory this guarantees they'll be sorted in time order. However,
+   if your files have different names, and you're archiving to mbox files,
+   the order may not be what you'd expect.
+
 ## License ##
 
 Maildirarc is released under the GPLv2 license. See the COPYING
