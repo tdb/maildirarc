@@ -105,16 +105,7 @@ foreach my $folder (@ARGV) {
 	&archive_folder($folder);
 }
 
-foreach my $fh (sort keys %MBOXFHS) {
-	if ($DEBUG == 1) {
-		print "Closing $fh";
-		if (defined $MBOXMSGCOUNT{$fh}) {
-			print " with $MBOXMSGCOUNT{$fh} messages";
-		}
-		print ".\n";
-	}
-	close($MBOXFHS{$fh}) || die "Can't close mbox file $fh: $!";
-}
+&close_mboxfhs();
 
 exit(0);
 
@@ -170,7 +161,7 @@ sub archive_folder() {
 	}
 
 	# The main processing loop
-	opendir(DIR, "$folder/cur") || die "Can't open directory $folder/cur: $!";
+	opendir(DIR, "$folder/cur") || &exit_with_error("Can't open directory $folder/cur: $!");
 	foreach my $file (sort readdir(DIR)) { # FIXME this is inefficient for large directories
 		my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = stat("$folder/cur/$file");
 		next unless S_ISREG($mode);
@@ -180,44 +171,45 @@ sub archive_folder() {
 			print "$folder/cur/$file\n";
 		} else {
 			if ($REMOVE == 1) {
-				unlink("$folder/cur/$file") || die "Can't remove $folder/cur/$file: $!";
+				unlink("$folder/cur/$file") || &exit_with_error("Can't remove $folder/cur/$file: $!");
 			} else {
 				if (defined $MBOX) {
 					&file_to_mbox("$folder/cur/$file", $MBOX);
 					if ($COPY != 1) {
-						unlink("$folder/cur/$file") || die "Can't remove $folder/cur/$file: $!";
+						unlink("$folder/cur/$file") || &exit_with_error("Can't remove $folder/cur/$file: $!");
 					}
 				} else {
 					if ($COPY == 1) {
-						copy("$folder/cur/$file", "$destfolder/cur/$file") || die "Can't copy $folder/cur/$file to $destfolder/cur/$file: $!";
+						copy("$folder/cur/$file", "$destfolder/cur/$file") || &exit_with_error("Can't copy $folder/cur/$file to $destfolder/cur/$file: $!");
 					} else {
-						move("$folder/cur/$file", "$destfolder/cur/$file") || die "Can't move $folder/cur/$file to $destfolder/cur/$file: $!";
+						move("$folder/cur/$file", "$destfolder/cur/$file") || &exit_with_error("Can't move $folder/cur/$file to $destfolder/cur/$file: $!");
 					}
 				}
 			}
 		}
 	}
-	closedir(DIR) || die "Can't close directory $folder/cur: $!";
+	closedir(DIR) || &exit_with_error("Can't close directory $folder/cur: $!");
 }
 
 # Make a Maildir folder with restrictive permissions
 sub make_maildir() {
 	my ($folder) = @_;
 
-	mkdir("$folder", 0700) || die "Can't create $folder: $!";
-	mkdir("$folder/cur", 0700) || die "Can't create $folder/cur: $!";
-	mkdir("$folder/new", 0700) || die "Can't create $folder/new: $!";
-	mkdir("$folder/tmp", 0700) || die "Can't create $folder/tmp: $!";
+	mkdir("$folder", 0700) || &exit_with_error("Can't create $folder: $!");
+	mkdir("$folder/cur", 0700) || &exit_with_error("Can't create $folder/cur: $!");
+	mkdir("$folder/new", 0700) || &exit_with_error("Can't create $folder/new: $!");
+	mkdir("$folder/tmp", 0700) || &exit_with_error("Can't create $folder/tmp: $!");
 
-	sysopen(FH, "$folder/maildirfolder", O_WRONLY | O_CREAT | O_NONBLOCK | O_NOCTTY, 0600) || die "Can't create $folder/maildirfolder: $!";
-	close(FH) || die "Can't close $folder/maildirfolder: $!";
+	sysopen(FH, "$folder/maildirfolder", O_WRONLY | O_CREAT |
+	O_NONBLOCK | O_NOCTTY, 0600) || &exit_with_error("Can't create $folder/maildirfolder: $!");
+	close(FH) || &exit_with_error("Can't close $folder/maildirfolder: $!");
 }
 
 # Read a Maildir file and append it to an mbox file
 sub file_to_mbox() {
 	my ($file, $mbox) = @_;
 
-	open(MDMESSAGE, "<$file") || die "Can't open Maildir message $file: $!";
+	open(MDMESSAGE, "<$file") || &exit_with_error("Can't open Maildir message $file: $!");
 
 	# First pass is to find data for From line and extra headers
 	my $returnpath;
@@ -268,7 +260,7 @@ sub file_to_mbox() {
 				elsif ($buffer =~ /^Delivery-date:\s+(.+)$/i) {
 					$deliverydate = str2time($1);
 					if (!defined $deliverydate) {
-						die "Can't parse Delivery-date header in $file";
+						&exit_with_error("Can't parse Delivery-date header in $file");
 					}
 				}
 
@@ -320,7 +312,7 @@ sub file_to_mbox() {
 				if (defined $replyto) {
 					$returnpath = $replyto;
 				} else {
-					die "Can't find Return-path, From, Sender or Reply-To headers in $file";
+					&exit_with_error("Can't find Return-path, From, Sender or Reply-To headers in $file");
 				}
 			}
 		}
@@ -332,7 +324,7 @@ sub file_to_mbox() {
 		}
 
 		if (!defined $returnpath) {
-			die "Can't parse From, Sender or Reply-To headers in $file";
+			&exit_with_error("Can't parse From, Sender or Reply-To headers in $file");
 		}
 	}
 
@@ -348,12 +340,12 @@ sub file_to_mbox() {
 		if (defined $received) {
 			$received = str2time($received);
 			if (!defined $received) {
-				die "Can't parse date in first Received header in $file";
+				&exit_with_error("Can't parse date in first Received header in $file");
 			} else {
 				$deliverydate = $received;
 			}
 		} else {
-			die "Can't find Delivery-date or Received headers in $file";
+			&exit_with_error("Can't find Delivery-date or Received headers in $file");
 		}
 	}
 
@@ -379,7 +371,7 @@ sub file_to_mbox() {
 			print STDERR "$mbox exists, but is not a file\n";
 			exit(1);
 		}
-		open($MBOXFH, ">>$mbox") || die "Can't open (for append) mbox file $mbox: $!";
+		open($MBOXFH, ">>$mbox") || &exit_with_error("Can't open (for append) mbox file $mbox: $!");
 		$MBOXFHS{$mbox} = $MBOXFH;
 	}
 
@@ -441,7 +433,7 @@ sub file_to_mbox() {
 
 	$MBOXMSGCOUNT{$mbox}++;
 
-	close(MDMESSAGE) || die "Can't close Maildir message $file: $!";
+	close(MDMESSAGE) || &exit_with_error("Can't close Maildir message $file: $!");
 }
 
 sub printheader() {
@@ -457,6 +449,29 @@ sub printheader() {
 	}
 
 	print $fh "$header: $value\n";
+}
+
+sub close_mboxfhs() {
+	foreach my $fh (sort keys %MBOXFHS) {
+		if ($DEBUG == 1) {
+			print "Closing $fh";
+			if (defined $MBOXMSGCOUNT{$fh}) {
+				print " with $MBOXMSGCOUNT{$fh} messages";
+			}
+			print ".\n";
+		}
+		# don't use exit_with_error() here because it calls us
+		close($MBOXFHS{$fh}) || die "Can't close mbox file $fh: $!";
+	}
+}
+
+sub exit_with_error() {
+	my ($message) = @_;
+
+	&close_mboxfhs();
+
+	print STDERR "$message\n" if defined $message;
+	exit(1);
 }
 
 sub usage() {
