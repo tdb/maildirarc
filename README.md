@@ -12,6 +12,7 @@ Maildirarc is written in Perl and requires the following libraries:
  * Getopt::Long
  * File::Copy
  * Date::Parse (part of the TimeDate CPAN module)
+ * Email::Address
 
 The first two are usually installed with Perl.
 
@@ -124,10 +125,6 @@ output:
    and reading of RFC 5536, I concluded these were used for news
    rather than email, and even there they're now deprecated. So now
    Maildirarc completely ignores the Lines header.
-
- * When operating in mbox mode the header parsing used to locate the
-   sender's address is fragile. There are almost certainly address
-   formats that it will incorrectly parse.
 
 ## License ##
 

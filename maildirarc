@@ -31,7 +31,6 @@
 # Locking of mbox files (especially when keeping them open).
 # Keeping mbox files open means we could hit an FD limit.
 # Should we close and reopen mbox file every time filename changes?
-# Use something like Email::Address to parse the email address headers?
 
 # mbox format notes:
 # http://homepage.ntlworld.com/jonathan.deboynepollard/FGA/mail-mbox-formats.html
@@ -42,6 +41,10 @@ use Getopt::Long;
 use Date::Parse;
 use Fcntl qw(:DEFAULT :mode);
 use File::Copy;
+use Email::Address;
+
+# Not sure if this cache is a good idea
+#Email::Address->disable_cache;
 
 my $DEFARCFOLDER = 'archive';
 my %MBOXFHS;
@@ -274,39 +277,19 @@ sub file_to_mbox() {
 					$received = $1;
 				}
 
-				# FIXME generally uneasy about the address parsing here
-
 				# Grab From header in case we don't find Return-path
-				elsif ($buffer =~ /^From:.*<([^>]*)>\s*$/i) {
-					$from = $1;
-				}
-				elsif ($buffer =~ /^From:.*\s+(\"[^\@]+\"\@[^\@^\s]+)\s*/i) {
-					$from = $1;
-				}
-				elsif ($buffer =~ /^From:.*\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
+				elsif ($buffer =~ /^From:(.*)$/i) {
 					$from = $1;
 				}
 
 				# Grab Sender header in case we don't find Return-path or From
-				elsif ($buffer =~ /^Sender:.*<([^>]*)>\s*$/i) {
+				elsif ($buffer =~ /^Sender:(.*)$/i) {
 					$sender = $1;
-				}
-				elsif ($buffer =~ /^Sender:.*\s+(\"[^\@]+\"\@[^\@^\s]+)\s*/i) {
-					$from = $1;
-				}
-				elsif ($buffer =~ /^Sender:.*\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
-					$from = $1;
 				}
 
 				# Grab Reply-To header in case we don't find Return-path, From or Sender
-				elsif ($buffer =~ /^Reply-To:.*<([^>]*)>\s*$/i) {
+				elsif ($buffer =~ /^Reply-To:(.*)$/i) {
 					$replyto = $1;
-				}
-				elsif ($buffer =~ /^Reply-To:.*\s+(\"[^\@]+\"\@[^\@^\s]+)\s*/i) {
-					$from = $1;
-				}
-				elsif ($buffer =~ /^Reply-To:.*\s+([^\@^\s]+\@[^\@^\s]+)\s*/i) {
-					$from = $1;
 				}
 
 				# Keep note if we see headers we'll add later
@@ -340,6 +323,16 @@ sub file_to_mbox() {
 					die "Can't find Return-path, From, Sender or Reply-To headers in $file";
 				}
 			}
+		}
+
+		# Purposely do this inside here - don't need to parse Return-path header
+		my @addresses = Email::Address->parse($returnpath);
+		if (@addresses) {
+			$returnpath = $addresses[0]->address; # only want first
+		}
+
+		if (!defined $returnpath) {
+			die "Can't parse From, Sender or Reply-To headers in $file";
 		}
 	}
 
