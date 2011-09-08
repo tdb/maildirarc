@@ -215,6 +215,7 @@ sub file_to_mbox() {
 	my $returnpath;
 	my $deliverydate;
 	my $received;
+	my $date;
 	my $from;
 	my $sender;
 	my $replyto;
@@ -267,6 +268,11 @@ sub file_to_mbox() {
 				# Grab first (ie. latest) received header in case we don't find Delivery-date
 				elsif (!defined $received && $buffer =~ /^Received:.*;([^;]+)$/) {
 					$received = $1;
+				}
+
+				# Grab Date header in case we don't find Delivery-date or Received
+				elsif ($buffer =~ /^Date:\s+(.+)$/i) {
+					$date = $1;
 				}
 
 				# Grab From header in case we don't find Return-path
@@ -335,7 +341,8 @@ sub file_to_mbox() {
 	}
 	$returnpath =~ s/\s/-/g;
 
-	# If we didn't find the Delivery-date header, fall back to most recent Received
+	# If we didn't find the Delivery-date header, fall back to the most recent Received
+	# header and then to the Date header.
 	if (!defined $deliverydate) {
 		if (defined $received) {
 			$received = str2time($received);
@@ -345,7 +352,16 @@ sub file_to_mbox() {
 				$deliverydate = $received;
 			}
 		} else {
-			&exit_with_error("Can't find Delivery-date or Received headers in $file");
+			if (defined $date) {
+				$date = str2time($date);
+				if (!defined $date) {
+					&exit_with_error("Can't parse date in Date header in $file");
+				} else {
+					$deliverydate = $date;
+				}
+			} else {
+				&exit_with_error("Can't find Delivery-date, Received or Date headers in $file");
+			}
 		}
 	}
 

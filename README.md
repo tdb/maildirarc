@@ -51,9 +51,10 @@ and the sender's email address. It obtains these as follows:
 
  * The delivery date is taken by looking first at the `Delivery-date`
    header. If that doesn't exist it next looks at the latest `Received`
-   header. It never looks at the `Date` header since this may be bogus or
-   invalid. If a date cannot be parsed or isn't found at all Maildirarc
-   will abort.
+   header. As a last resort it looks at the `Date` header, which although
+   not ideal (because it could be bogus or invalid) it might be the only
+   header in a sent items folder. If a date cannot be parsed or isn't
+   found at all Maildirarc will abort.
 
  * The sender's email address is obtained by looking at these headers
    in order: `Return-path`, `From`, `Sender`, `Reply-To`. If it fails
