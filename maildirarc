@@ -278,17 +278,17 @@ sub file_to_mbox() {
 
 				# Grab From header in case we don't find Return-path
 				elsif ($buffer =~ /^From:(.*)$/i) {
-					$from = $1;
+					$from = &parse_addr($1);
 				}
 
 				# Grab Sender header in case we don't find Return-path or From
 				elsif ($buffer =~ /^Sender:(.*)$/i) {
-					$sender = $1;
+					$sender = &parse_addr($1);
 				}
 
 				# Grab Reply-To header in case we don't find Return-path, From or Sender
 				elsif ($buffer =~ /^Reply-To:(.*)$/i) {
-					$replyto = $1;
+					$replyto = &parse_addr($1);
 				}
 
 				# Keep note if we see headers we'll add later
@@ -319,19 +319,9 @@ sub file_to_mbox() {
 				if (defined $replyto) {
 					$returnpath = $replyto;
 				} else {
-					&exit_with_error("Can't find Return-path, From, Sender or Reply-To headers in $file");
+					&exit_with_error("Can't find or parse Return-path, From, Sender or Reply-To headers in $file");
 				}
 			}
-		}
-
-		# Purposely do this inside here - don't need to parse Return-path header
-		my @addresses = Email::Address->parse($returnpath);
-		if (@addresses) {
-			$returnpath = $addresses[0]->address; # only want first
-		}
-
-		if (!defined $returnpath) {
-			&exit_with_error("Can't parse From, Sender or Reply-To headers in $file");
 		}
 	}
 
@@ -340,7 +330,6 @@ sub file_to_mbox() {
 		# Based on behaviour of Exim
 		$returnpath = 'MAILER-DAEMON';
 	}
-	$returnpath =~ s/\s/-/g;
 
 	# If we didn't find the Delivery-date header, fall back to the most recent Received
 	# header and then to the Date header.
@@ -480,6 +469,18 @@ sub close_mboxfhs() {
 		# don't use exit_with_error() here because it calls us
 		close($MBOXFHS{$fh}) || die "Can't close mbox file $fh: $!";
 	}
+}
+
+sub parse_addr() {
+	my ($header) = @_;
+
+	my @addresses = Email::Address->parse($header);
+	if (@addresses) {
+		# only want first address if there was a list
+		return $addresses[0]->address;
+	}
+
+	return undef;
 }
 
 sub exit_with_error() {
