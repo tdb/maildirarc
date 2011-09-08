@@ -20,7 +20,7 @@ The first two are usually installed with Perl.
 
 Run `maildirarc` to view the usage information:
 
-    Usage: maildirarc [-h] [-f folder] [-m mbox] [-d days] [-r] [-c] [-n] folder [folder...]
+    Usage: maildirarc [-h] [-f folder] [-m mbox] [-d days] [-r] [-c] [-F] [-n] folder [folder...]
     Archives the contents of the given folders.
 
       -f    the full path of the archive folder [default: [folder].archive]
@@ -29,6 +29,7 @@ Run `maildirarc` to view the usage information:
       -d    the age, in days, at which to archive a message [default: 90]
       -r    REMOVE the messages rather than move them
       -c    copy rather than move messages (leaves original intact)
+      -F    replace "From " with ">From " when doing mbox archiving
       -n    don't do anything; just say what would be done
       -h    print longer help information
 
@@ -39,11 +40,16 @@ archive stuff that hasn't been seen yet.
 
 ## mbox Format ##
 
-There are various mbox formats in existence, so I had to choose
-which one to use for Maildirarc. I decided on the variant known as
-mboxcl. The mboxcl format quotes lines in the message body that
-start with `"From "` and additionally adds a `Content-Length` header.
-This is consistent with the behaviour of Mutt.
+There are various mbox formats in existence, so I had to choose which
+one to use for Maildirarc. I decided on the variant known as mboxcl2. The
+mboxcl2 format does not quote lines in the message body that start with
+`"From "`, instead it adds a `Content-Length` header so readers can
+determine where the next message starts. This is consistent with the
+behaviour of Mutt.
+
+To enable quoting of lines in the message body that start with `"From "`
+use the `-F` command line option. You may wish to do this for maximum
+compatibility with other mail readers.
 
 Maildirarc needs to create the `"From "` separator line for each message
 when adding it to an mbox file. To do this it requires the delivery date
@@ -99,11 +105,10 @@ output:
    a file descriptor limit is hit. This method of operation may be
    reconsidered.
 
- * Maildirarc escapes lines starting with `"From "` by adding a `>`
-   character at the start. It also adds a `Content-Length` header
-   which might make the `"From "` escaping redundant, depending on
-   the MUA being used. However, I felt it was best to do both methods
-   for maximum compatibility.
+ * Maildirarc does not escape lines starting with `"From "`. This
+   may cause compatibility issues with other mail readers. If it's a
+   problem for you, or you'd just like maxmium compatibility, use the
+   `-F` command line option to enable `"From "` escaping.
 
  * The format of messages in mbox files has been deduced by looking
    at RFCs and examining the behaviour of other programs, in
