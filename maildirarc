@@ -1,4 +1,4 @@
-#!/usr/local/bin/perl -w
+#!/usr/bin/env perl
 
 # Maildirarc: A Maildir archival script
 # Copyright (C) 2011  Tim Bishop <tim@bishnet.net>
@@ -36,6 +36,7 @@
 # http://homepage.ntlworld.com/jonathan.deboynepollard/FGA/mail-mbox-formats.html
 
 use strict;
+use warnings;
 
 use Getopt::Long;
 use Date::Parse;
