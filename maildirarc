@@ -368,10 +368,9 @@ sub file_to_mbox() {
 	my $month = sprintf("%02d", $parseddd[4]+1);
 	$mbox =~ s/\%m/$month/g;
 	# grab the Maildir foldername
-	# /home/tdb/Maildir/.folder.subfolder/cur -> folder-subfolder
-	if ($file =~ m/\.?([^\/]+)\/cur\/[^\/]+$/) {
+	# /home/tdb/Maildir/.folder.subfolder/cur -> .folder.subfolder
+	if ($file =~ m/\/([^\/]+)\/cur\/[^\/]+$/) {
 		my $maildirname = $1;
-		$maildirname =~ s/\./-/g;
 		$mbox =~ s/\%n/$maildirname/g;
 	}
 
