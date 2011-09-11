@@ -430,8 +430,8 @@ sub file_to_mbox() {
 						exit(1);
 					}
 				}
-				$status .= 'O'; # old (we're in cur, so always old)
 			}
+			$status .= 'O'; # old (we're in cur, so always old)
 
 			&printheader($MBOXFH, "Status", $status, $seenstatus, $file);
 			&printheader($MBOXFH, "X-Status", $xstatus, $seenxstatus, $file);
