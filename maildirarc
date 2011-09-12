@@ -60,6 +60,8 @@ my $COPY = 0;
 my $FROMHACK = 0;
 my $DEBUG = 0;
 
+# Allow single character options to be combined, and be case sensitive
+Getopt::Long::Configure("bundling");
 unless (GetOptions(
 		'f=s' => \$ARCFOLDER,
 		'm=s' => \$MBOX,
