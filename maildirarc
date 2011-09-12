@@ -76,11 +76,6 @@ unless (GetOptions(
 	&usage();
 }
 
-if (defined $ARCFOLDER && defined $MBOX) {
-	print STDERR "Error: -f and -m cannot be specified together\n";
-	&usage();
-}
-
 if ($REMOVE == 1 && (defined $ARCFOLDER || defined $MBOX)) {
 	print STDERR "Error: -f and -m don't make sense if -r is given\n";
 	&usage();
@@ -105,6 +100,7 @@ if ($DEBUG == 1) {
 	print "Copy rather than move when archiving?:	". ($COPY==1 ? 'yes' : 'no') ."\n";
 	print "Apply \"From \" hack to messages?:	". ($FROMHACK==1 ? 'yes' : 'no') . "\n";
 	print "List of Maildir folders to process:	" . join(' ', @ARGV) . "\n";
+	print "\n";
 }
 
 foreach my $folder (@ARGV) {
@@ -120,19 +116,20 @@ sub archive_folder() {
 	my ($folder) = @_;
 
 	if (! -d "$folder/cur" || ! -d "$folder/new" || ! -d "$folder/tmp") {
-		print STDERR "Error: $folder is not a Maildir folder\n";
-		exit(1);
+		&exit_with_error("Error: $folder is not a Maildir folder");
 	}
 
 	# This only gets used when archiving to Maildir (not mbox)
 	my $destfolder = "$folder.$DEFARCFOLDER";
 	if (defined $ARCFOLDER) {
 		$destfolder = $ARCFOLDER;
+		# replace %n with the original folder's name
+		$destfolder =~ s/\%n/$folder/g;
 	}
 
 	# Check if the target exists, and possibly create it
 	if ($REMOVE != 1) {
-		if (!defined $MBOX) {
+		if (!defined $MBOX || defined $ARCFOLDER) {
 			if (! -d "$destfolder/cur" || ! -d "$destfolder/new" || ! -d "$destfolder/tmp") {
 				if (! -d "$destfolder") {
 					if ($DO == 1) {
@@ -141,8 +138,7 @@ sub archive_folder() {
 						print "Would create Maildir folder $destfolder\n";
 					}
 				} else {
-					print STDERR "$destfolder exists, but is not a Maildir folder\n";
-					exit(1);
+					&exit_with_error("$destfolder exists, but is not a Maildir folder");
 				}
 			}
 		}
@@ -156,13 +152,17 @@ sub archive_folder() {
 			print "Would remove these messages from $folder/cur:\n";
 		} else {
 			my $action = $COPY == 1 ? "copy" : "move";
+			print "Would $action these messages from $folder/cur\n";
 			if (defined $MBOX) {
-				print "Would $action these messages from $folder/cur\n";
-				print "                            to $MBOX:\n";
-			} else {
-				print "Would $action these messages from $folder/cur\n";
-				print "                            to $destfolder/cur:\n";
+				print "                            to $MBOX";
 			}
+			if (!defined $MBOX || defined $ARCFOLDER) {
+				if (defined $MBOX) {
+					print "\n                            and\n";
+				}
+				print "                            to $destfolder/cur";
+			}
+			print ":\n";
 		}
 	}
 
@@ -181,14 +181,19 @@ sub archive_folder() {
 			} else {
 				if (defined $MBOX) {
 					&file_to_mbox("$folder/cur/$file", $MBOX);
-					if ($COPY != 1) {
-						unlink("$folder/cur/$file") || &exit_with_error("Can't remove $folder/cur/$file: $!");
-					}
-				} else {
+				}
+				# If we're not doing a a copy and we're doing maildir, we can
+				# do a move. Otherwise if we're doing mbox we need to delete
+				# the file ourselves.
+				if (!defined $MBOX || defined $ARCFOLDER) {
 					if ($COPY == 1) {
 						copy("$folder/cur/$file", "$destfolder/cur/$file") || &exit_with_error("Can't copy $folder/cur/$file to $destfolder/cur/$file: $!");
 					} else {
 						move("$folder/cur/$file", "$destfolder/cur/$file") || &exit_with_error("Can't move $folder/cur/$file to $destfolder/cur/$file: $!");
+					}
+				} else {
+					if ($COPY != 1) {
+						unlink("$folder/cur/$file") || &exit_with_error("Can't remove $folder/cur/$file: $!");
 					}
 				}
 			}
@@ -371,7 +376,7 @@ sub file_to_mbox() {
 	$mbox =~ s/\%m/$month/g;
 	# grab the Maildir foldername
 	# /home/tdb/Maildir/.folder.subfolder/cur -> .folder.subfolder
-	if ($file =~ m/\/([^\/]+)\/cur\/[^\/]+$/) {
+	if ($file =~ m/\/?([^\/]+)\/cur\/[^\/]+$/) {
 		my $maildirname = $1;
 		$mbox =~ s/\%n/$maildirname/g;
 	}
@@ -380,8 +385,7 @@ sub file_to_mbox() {
 	if (!defined $MBOXFH) {
 		print "Opening $mbox...\n" if $DEBUG == 1;
 		if (-e $mbox && ! -f $mbox) {
-			print STDERR "$mbox exists, but is not a file\n";
-			exit(1);
+			&exit_with_error("$mbox exists, but is not a file");
 		}
 		open($MBOXFH, ">>$mbox") || &exit_with_error("Can't open (for append) mbox file $mbox: $!");
 		$MBOXFHS{$mbox} = $MBOXFH;
@@ -428,8 +432,7 @@ sub file_to_mbox() {
 					} elsif ($flag eq 'D') { # draft
 						$xstatus .= 'T';
 					} else {
-						print STDERR "Unexpected flags: $file\n";
-						exit(1);
+						&exit_with_error("Unexpected flags: $file");
 					}
 				}
 			}
