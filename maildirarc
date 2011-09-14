@@ -477,7 +477,7 @@ sub close_mboxfhs() {
 		if ($DEBUG == 1) {
 			print "Closing $fh";
 			if (defined $MBOXMSGCOUNT{$fh}) {
-				print " with $MBOXMSGCOUNT{$fh} messages";
+				print " with $MBOXMSGCOUNT{$fh} additional messages";
 			}
 			print ".\n";
 		}
