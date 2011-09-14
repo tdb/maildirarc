@@ -124,7 +124,11 @@ sub archive_folder() {
 	if (defined $ARCFOLDER) {
 		$destfolder = $ARCFOLDER;
 		# replace %n with the original folder's name
-		$destfolder =~ s/\%n/$folder/g;
+		# /home/tdb/Maildir/.folder.subfolder/ -> .folder.subfolder
+		if ($folder =~ m/\/?([^\/]+)\/?$/) {
+			my $foldername = $1;
+			$destfolder =~ s/\%n/$foldername/g;
+		}
 	}
 
 	# Check if the target exists, and possibly create it
