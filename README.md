@@ -20,7 +20,7 @@ The first two are usually installed with Perl.
 
 Run `maildirarc` to view the usage information:
 
-    Usage: maildirarc [-h] [-f folder] [-m mbox] [-d days] [-r] [-c] [-F] [-n] folder [folder...]
+    Usage: maildirarc [-h] [-f folder] [-m mbox] [-d days] [-r] [-c] [-F] [-s] [-n] folder [folder...]
     Archives the contents of the given folders.
 
       -f    the full path of the archive folder [default: [folder].archive]
@@ -30,6 +30,7 @@ Run `maildirarc` to view the usage information:
       -r    REMOVE the messages rather than move them
       -c    copy rather than move messages (leaves original intact)
       -F    replace "From " with ">From " when doing mbox archiving
+      -s    skip unparseable messages when mbox archiving
       -n    don't do anything; just say what would be done
       -h    print longer help information
 

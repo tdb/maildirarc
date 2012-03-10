@@ -58,6 +58,7 @@ my $DO = 1;
 my $REMOVE = 0;
 my $COPY = 0;
 my $FROMHACK = 0;
+my $SKIP = 0;
 my $DEBUG = 0;
 
 # Allow single character options to be combined, and be case sensitive
@@ -69,6 +70,7 @@ unless (GetOptions(
 		'r' => \$REMOVE,
 		'c' => \$COPY,
 		'F' => \$FROMHACK,
+		's' => \$SKIP,
 		'n' => sub { $DO = 0 },
 		'debug' => \$DEBUG,
 		'help|h' => \&help,
@@ -99,6 +101,7 @@ if ($DEBUG == 1) {
 	print "Remove rather than archive?:		". ($REMOVE==1 ? 'yes' : 'no') ."\n";
 	print "Copy rather than move when archiving?:	". ($COPY==1 ? 'yes' : 'no') ."\n";
 	print "Apply \"From \" hack to messages?:	". ($FROMHACK==1 ? 'yes' : 'no') . "\n";
+	print "Skip unparseable messages?:		". ($SKIP==1 ? 'yes' : 'no') ."\n";
 	print "List of Maildir folders to process:	" . join(' ', @ARGV) . "\n";
 	print "\n";
 }
@@ -116,7 +119,7 @@ sub archive_folder() {
 	my ($folder) = @_;
 
 	if (! -d "$folder/cur" || ! -d "$folder/new" || ! -d "$folder/tmp") {
-		&exit_with_error("Error: $folder is not a Maildir folder");
+		&error_and_maybe_exit("Error: $folder is not a Maildir folder", 1);
 	}
 
 	# This only gets used when archiving to Maildir (not mbox)
@@ -142,7 +145,7 @@ sub archive_folder() {
 						print "Would create Maildir folder $destfolder\n";
 					}
 				} else {
-					&exit_with_error("$destfolder exists, but is not a Maildir folder");
+					&error_and_maybe_exit("$destfolder exists, but is not a Maildir folder", 1);
 				}
 			}
 		}
@@ -171,7 +174,7 @@ sub archive_folder() {
 	}
 
 	# The main processing loop
-	opendir(DIR, "$folder/cur") || &exit_with_error("Can't open directory $folder/cur: $!");
+	opendir(DIR, "$folder/cur") || &error_and_maybe_exit("Can't open directory $folder/cur: $!", 1);
 	foreach my $file (sort readdir(DIR)) { # FIXME this is inefficient for large directories
 		my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = stat("$folder/cur/$file");
 		next unless S_ISREG($mode);
@@ -181,50 +184,55 @@ sub archive_folder() {
 			print "$folder/cur/$file\n";
 		} else {
 			if ($REMOVE == 1) {
-				unlink("$folder/cur/$file") || &exit_with_error("Can't remove $folder/cur/$file: $!");
+				unlink("$folder/cur/$file") || &error_and_maybe_exit("Can't remove $folder/cur/$file: $!", 1);
 			} else {
 				if (defined $MBOX) {
-					&file_to_mbox("$folder/cur/$file", $MBOX);
+					my $success = &file_to_mbox("$folder/cur/$file", $MBOX);
+					# Move on if we failed to parse a message and -s was used
+					if ($SKIP == 1 && $success == 0) {
+						print STDERR "Skipping unparseable message: $folder/cur/$file\n";
+						next;
+					}
 				}
 				# If we're not doing a a copy and we're doing maildir, we can
 				# do a move. Otherwise if we're doing mbox we need to delete
 				# the file ourselves.
 				if (!defined $MBOX || defined $ARCFOLDER) {
 					if ($COPY == 1) {
-						copy("$folder/cur/$file", "$destfolder/cur/$file") || &exit_with_error("Can't copy $folder/cur/$file to $destfolder/cur/$file: $!");
+						copy("$folder/cur/$file", "$destfolder/cur/$file") || &error_and_maybe_exit("Can't copy $folder/cur/$file to $destfolder/cur/$file: $!", 1);
 					} else {
-						move("$folder/cur/$file", "$destfolder/cur/$file") || &exit_with_error("Can't move $folder/cur/$file to $destfolder/cur/$file: $!");
+						move("$folder/cur/$file", "$destfolder/cur/$file") || &error_and_maybe_exit("Can't move $folder/cur/$file to $destfolder/cur/$file: $!", 1);
 					}
 				} else {
 					if ($COPY != 1) {
-						unlink("$folder/cur/$file") || &exit_with_error("Can't remove $folder/cur/$file: $!");
+						unlink("$folder/cur/$file") || &error_and_maybe_exit("Can't remove $folder/cur/$file: $!", 1);
 					}
 				}
 			}
 		}
 	}
-	closedir(DIR) || &exit_with_error("Can't close directory $folder/cur: $!");
+	closedir(DIR) || &error_and_maybe_exit("Can't close directory $folder/cur: $!", 1);
 }
 
 # Make a Maildir folder with restrictive permissions
 sub make_maildir() {
 	my ($folder) = @_;
 
-	mkdir("$folder", 0700) || &exit_with_error("Can't create $folder: $!");
-	mkdir("$folder/cur", 0700) || &exit_with_error("Can't create $folder/cur: $!");
-	mkdir("$folder/new", 0700) || &exit_with_error("Can't create $folder/new: $!");
-	mkdir("$folder/tmp", 0700) || &exit_with_error("Can't create $folder/tmp: $!");
+	mkdir("$folder", 0700) || &error_and_maybe_exit("Can't create $folder: $!", 1);
+	mkdir("$folder/cur", 0700) || &error_and_maybe_exit("Can't create $folder/cur: $!", 1);
+	mkdir("$folder/new", 0700) || &error_and_maybe_exit("Can't create $folder/new: $!", 1);
+	mkdir("$folder/tmp", 0700) || &error_and_maybe_exit("Can't create $folder/tmp: $!", 1);
 
 	sysopen(FH, "$folder/maildirfolder", O_WRONLY | O_CREAT |
-	O_NONBLOCK | O_NOCTTY, 0600) || &exit_with_error("Can't create $folder/maildirfolder: $!");
-	close(FH) || &exit_with_error("Can't close $folder/maildirfolder: $!");
+	O_NONBLOCK | O_NOCTTY, 0600) || &error_and_maybe_exit("Can't create $folder/maildirfolder: $!", 1);
+	close(FH) || &error_and_maybe_exit("Can't close $folder/maildirfolder: $!", 1);
 }
 
 # Read a Maildir file and append it to an mbox file
 sub file_to_mbox() {
 	my ($file, $mbox) = @_;
 
-	open(MDMESSAGE, "<$file") || &exit_with_error("Can't open Maildir message $file: $!");
+	open(MDMESSAGE, "<$file") || &error_and_maybe_exit("Can't open Maildir message $file: $!", 1);
 
 	# First pass is to find data for From line and extra headers
 	my $returnpath;
@@ -278,7 +286,9 @@ sub file_to_mbox() {
 				elsif ($buffer =~ /^Delivery-date:\s+(.+)$/i) {
 					$deliverydate = str2time($1);
 					if (!defined $deliverydate) {
-						&exit_with_error("Can't parse Delivery-date header in $file");
+						# Only exit if $SKIP isn't set, otherwise return failure.
+						&error_and_maybe_exit("Can't parse Delivery-date header in $file", $SKIP == 0);
+						return 0;
 					}
 				}
 
@@ -335,7 +345,9 @@ sub file_to_mbox() {
 				if (defined $replyto) {
 					$returnpath = $replyto;
 				} else {
-					&exit_with_error("Can't find or parse Return-path, From, Sender or Reply-To headers in $file");
+					# Only exit if $SKIP isn't set, otherwise return failure.
+					&error_and_maybe_exit("Can't find or parse Return-path, From, Sender or Reply-To headers in $file", $SKIP == 0);
+					return 0;
 				}
 			}
 		}
@@ -353,7 +365,9 @@ sub file_to_mbox() {
 		if (defined $received) {
 			$received = str2time($received);
 			if (!defined $received) {
-				&exit_with_error("Can't parse date in first Received header in $file");
+				# Only exit if $SKIP isn't set, otherwise return failure.
+				&error_and_maybe_exit("Can't parse date in first Received header in $file", $SKIP == 0);
+				return 0;
 			} else {
 				$deliverydate = $received;
 			}
@@ -361,12 +375,16 @@ sub file_to_mbox() {
 			if (defined $date) {
 				$date = str2time($date);
 				if (!defined $date) {
-					&exit_with_error("Can't parse date in Date header in $file");
+					# Only exit if $SKIP isn't set, otherwise return failure.
+					&error_and_maybe_exit("Can't parse date in Date header in $file", $SKIP == 0);
+					return 0;
 				} else {
 					$deliverydate = $date;
 				}
 			} else {
-				&exit_with_error("Can't find Delivery-date, Received or Date headers in $file");
+				# Only exit if $SKIP isn't set, otherwise return failure.
+				&error_and_maybe_exit("Can't find Delivery-date, Received or Date headers in $file", $SKIP == 0);
+				return 0;
 			}
 		}
 	}
@@ -389,9 +407,9 @@ sub file_to_mbox() {
 	if (!defined $MBOXFH) {
 		print "Opening $mbox...\n" if $DEBUG == 1;
 		if (-e $mbox && ! -f $mbox) {
-			&exit_with_error("$mbox exists, but is not a file");
+			&error_and_maybe_exit("$mbox exists, but is not a file", 1);
 		}
-		open($MBOXFH, ">>$mbox") || &exit_with_error("Can't open (for append) mbox file $mbox: $!");
+		open($MBOXFH, ">>$mbox") || &error_and_maybe_exit("Can't open (for append) mbox file $mbox: $!", 1);
 		$MBOXFHS{$mbox} = $MBOXFH;
 	}
 
@@ -436,7 +454,7 @@ sub file_to_mbox() {
 					} elsif ($flag eq 'D') { # draft
 						$xstatus .= 'T';
 					} else {
-						&exit_with_error("Unexpected flags: $file");
+						&error_and_maybe_exit("Unexpected flags: $file", 1);
 					}
 				}
 			}
@@ -454,7 +472,10 @@ sub file_to_mbox() {
 
 	$MBOXMSGCOUNT{$mbox}++;
 
-	close(MDMESSAGE) || &exit_with_error("Can't close Maildir message $file: $!");
+	close(MDMESSAGE) || &error_and_maybe_exit("Can't close Maildir message $file: $!", 1);
+
+	# Success
+	return 1;
 }
 
 sub printheader() {
@@ -481,8 +502,9 @@ sub close_mboxfhs() {
 			}
 			print ".\n";
 		}
-		# don't use exit_with_error() here because it calls us
+		# don't use error_and_maybe_exit() here because it calls us
 		close($MBOXFHS{$fh}) || die "Can't close mbox file $fh: $!";
+		$MBOXFHS{$fh} = undef;
 	}
 }
 
@@ -498,18 +520,20 @@ sub parse_addr() {
 	return undef;
 }
 
-sub exit_with_error() {
-	my ($message) = @_;
-
-	&close_mboxfhs();
+sub error_and_maybe_exit() {
+	my ($message, $doexit) = @_;
 
 	print STDERR "$message\n" if defined $message;
-	exit(1);
+
+	if (defined $doexit && $doexit == 1) {
+		&close_mboxfhs();
+		exit(1);
+	}
 }
 
 sub usage() {
 	print STDERR <<EOF;
-Usage: $0 [-h] [-f folder] [-m mbox] [-d days] [-r] [-c] [-F] [-n] folder [folder...]
+Usage: $0 [-h] [-f folder] [-m mbox] [-d days] [-r] [-c] [-F] [-s] [-n] folder [folder...]
 Archives the contents of the given folders.
 
   -f    the full path of the archive folder [default: [folder].archive]
@@ -519,6 +543,7 @@ Archives the contents of the given folders.
   -r    REMOVE the messages rather than move them
   -c    copy rather than move messages (leaves original intact)
   -F    replace "From " with ">From " when doing mbox archiving
+  -s    skip unparseable messages when mboxing archiving
   -n    don't do anything; just say what would be done
   -h    print longer help information
 
